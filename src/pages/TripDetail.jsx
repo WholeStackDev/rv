@@ -19,8 +19,33 @@ export default function TripDetail() {
       supabase.from('trip_checklist').select('*, template:checklist_templates(*)').eq('trip_id', id),
     ])
     setTrip(tripRes.data)
-    setTripItems(itemsRes.data || [])
     setChecklist(checklistRes.data || [])
+
+    // Sync: ensure all packing/consumable items have trip_items
+    let currentTripItems = itemsRes.data || []
+    const { data: allItems } = await supabase
+      .from('items')
+      .select('id')
+      .in('category', ['packing', 'consumable'])
+
+    if (allItems?.length) {
+      const existingItemIds = new Set(currentTripItems.map(ti => ti.item_id))
+      const missing = allItems.filter(i => !existingItemIds.has(i.id))
+
+      if (missing.length > 0) {
+        await supabase.from('trip_items').insert(
+          missing.map(i => ({ trip_id: id, item_id: i.id, status: 'pending' }))
+        )
+        // Re-fetch to get the full joined data
+        const { data } = await supabase
+          .from('trip_items')
+          .select('*, item:items(*, container:containers(name, sub_location))')
+          .eq('trip_id', id)
+        currentTripItems = data || currentTripItems
+      }
+    }
+
+    setTripItems(currentTripItems)
     setLoading(false)
   }
 
